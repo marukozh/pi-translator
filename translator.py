@@ -7,9 +7,26 @@ import argparse
 import pycurl
 import StringIO
 import os.path
+import time
+import xml.etree.ElementTree
+
+def get_microsoft_token():
+    key = '' # Microsoft Translator Text API Key
+    url = 'https://api.cognitive.microsoft.com/sts/v1.0/issueToken'
+    c = pycurl.Curl()
+    c.setopt(pycurl.VERBOSE, 0)
+    c.setopt(pycurl.URL, url)
+    c.setopt(pycurl.POSTFIELDSIZE, 0)
+    fout = StringIO.StringIO()
+    c.setopt(pycurl.WRITEFUNCTION, fout.write)
+    c.setopt(pycurl.POST, 1)
+    c.setopt(pycurl.HTTPHEADER, ['Ocp-Apim-Subscription-Key: ' + key])
+    c.perform()
+    response_data = fout.getvalue()
+    return response_data
 
 def transcribe(language):
-    key = ''  # Microsoft API key
+    key = ''  # Microsoft Speech Recognition API key
     stt_url = 'https://speech.platform.bing.com/speech/recognition/interactive/cognitiveservices/v1?language=' + language
     filename = 'test.wav'
     print "listening .."
@@ -43,9 +60,30 @@ def transcribe(language):
 class Translator(object):
 
     def __init__(self):
-        None
+        self.token_expiration_time = time.clock() + 9 * 60 # refresh token after 9 min.
+        self.auth_token = get_microsoft_token()
 
-    def translate_text(self, phrase, origin_language, destination_language):
+    def ms_translate_text(self, phrase, origin_language, destination_language):
+        url = 'https://api.microsofttranslator.com/V2/Http.svc/Translate?appid='
+        c = pycurl.Curl()
+        c.setopt(pycurl.VERBOSE, 0)
+        c.setopt(pycurl.URL, url)
+        c.setopt(pycurl.POSTFIELDSIZE, 0)
+        fout = StringIO.StringIO()
+        c.setopt(pycurl.WRITEFUNCTION, fout.write)
+        if time.clock() > self.token_expiration_time:
+            print "Refreshing Token..."
+            self.token_expiration_time = time.clock() + 9 * 60
+            self.auth_token = get_microsoft_token()
+        header = 'Bearer%%20%s&from=%s&to=%s&text=%s' % (
+        self.auth_token, origin_language, destination_language, phrase)
+        request_url = url + header
+        r = requests.get(request_url)
+        result_text = r.text.encode('utf-8')
+        e = xml.etree.ElementTree.fromstring(result_text)
+        return e.text
+
+    def google_translate_text(self, phrase, origin_language, destination_language):
         tts_url = "https://translate.googleapis.com/translate_a/single?client=gtx&sl=%s&tl=%s&dt=t&q=%s" % (origin_language, destination_language, phrase)
         print "translate url = " + tts_url
         r = requests.get(tts_url)
@@ -56,11 +94,13 @@ class Translator(object):
 
     def speak_text(self, phrase, language):
         speech_url = "http://translate.google.com/translate_tts?ie=UTF-8&total=1&client=tw-ob&q=%s&tl=%s" % (phrase, language)
-        subprocess.call(["mplayer", speech_url], shell=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE)    
+        subprocess.call(["mplayer", speech_url], shell=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
     def translate(self, origin_language, destination_language, text):
-        translation = self.translate_text(text, origin_language, destination_language)
-        self.speak_text('Translating ' + text, origin_language)
+        translation = self.ms_translate_text(text, origin_language,
+                                             destination_language)
+        self.speak_text('Translating', 'en-US')
+        self.speak_text(text, origin_language)
         print "Translation: ", translation
         self.speak_text(translation, destination_language)
 
